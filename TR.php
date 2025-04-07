@@ -1,587 +1,261 @@
 <?php
-/**
- * 🚀 GPS Tracker Pro v3.0
- * 📅 Last Updated: 2025-04-07 11:43:33 UTC
- * 👤 Developer: GR3r
- * 🔒 Licensed under MIT
- */
+// 🤪 เช็คว่าเข้ามาแบบ POST หรือเปล่าวะ
+if ($_SERVER['REQUEST_METHOD'] === 'POST') {
+    header('Content-Type: application/json');
+    $data = json_decode(file_get_contents('php://input'), true);
+    
+    // 🗃️ เก็บข้อมูล GPS ลง Session 
+    session_start();
+    if (!isset($_SESSION['track_points'])) {
+        $_SESSION['track_points'] = [];
+    }
+    
+    $_SESSION['track_points'][] = [
+        'lat' => $data['lat'],
+        'lng' => $data['lng'],
+        'speed' => $data['speed'],
+        'timestamp' => time()
+    ];
+    
+    // 🧮 คำนวณระยะทางและความเร็ว
+    $points = $_SESSION['track_points'];
+    $total_distance = 0;
+    $avg_speed = 0;
+    
+    if (count($points) > 1) {
+        for ($i = 1; i < count($points); $i++) {
+            $total_distance += calculateDistance(
+                $points[$i-1]['lat'], 
+                $points[$i-1]['lng'],
+                $points[$i]['lat'], 
+                $points[$i]['lng']
+            );
+        }
+        $time_diff = end($points)['timestamp'] - $points[0]['timestamp'];
+        $avg_speed = ($time_diff > 0) ? ($total_distance / $time_diff) * 3600 : 0;
+    }
+    
+    die(json_encode([
+        'status' => '👍',
+        'distance' => round($total_distance, 2),
+        'avg_speed' => round($avg_speed, 2)
+    ]));
+}
 
-session_start();
-date_default_timezone_set('UTC');
-header('Content-Type: text/html; charset=utf-8');
-
-// 🔒 Security Headers
-header("X-Frame-Options: DENY");
-header("X-XSS-Protection: 1; mode=block");
-header("X-Content-Type-Options: nosniff");
+// 📏 ฟังก์ชันคำนวณระยะทาง
+function calculateDistance($lat1, $lon1, $lat2, $lon2) {
+    $theta = $lon1 - $lon2;
+    $dist = sin(deg2rad($lat1)) * sin(deg2rad($lat2)) +  
+            cos(deg2rad($lat1)) * cos(deg2rad($lat2)) * cos(deg2rad($theta));
+    $dist = acos($dist);
+    $dist = rad2deg($dist);
+    return $dist * 60 * 1.1515 * 1.609344;
+}
 ?>
 <!DOCTYPE html>
 <html lang="th">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <meta name="description" content="GPS Tracker Pro - ระบบติดตาม GPS แบบเรียลไทม์">
-    <meta name="author" content="GR3r">
-    <title>🚀 GPS Tracker Pro v3.0</title>
-    
-    <!-- 🎨 Fonts & Icons -->
-    <link href="https://fonts.googleapis.com/css2?family=Kanit:wght@300;400;500;600&display=swap" rel="stylesheet">
+    <title>🚗 ระบบติดตาม GPS สุดเจ๋ง</title>
     <link rel="stylesheet" href="https://unpkg.com/leaflet@1.7.1/dist/leaflet.css" />
-    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css">
-    
     <style>
-        /* 🎨 Custom Properties */
-        :root {
-            --primary: #00ff88;
-            --primary-dark: #00cc6a;
-            --secondary: #00ccff;
-            --dark: #1a1a1a;
-            --darker: #0f0f0f;
-            --light: #ffffff;
-            --card: rgba(255, 255, 255, 0.1);
-            --danger: #ff4444;
-            --warning: #ffbb33;
-            --success: #00C851;
-        }
-
-        /* 🌟 Global Styles */
-        * {
-            margin: 0;
-            padding: 0;
-            box-sizing: border-box;
-        }
-
+        /* 🎨 CSS สุดแจ่ม */
         body {
             margin: 0;
             padding: 0;
             font-family: 'Kanit', sans-serif;
-            background: linear-gradient(135deg, var(--darker) 0%, var(--dark) 100%);
-            color: var(--light);
-            min-height: 100vh;
-            line-height: 1.6;
+            background: #1a1a1a;
+            color: #fff;
         }
-
-        /* 🌈 Glass Morphism */
-        .glass {
-            background: var(--card);
-            backdrop-filter: blur(10px);
-            border-radius: 15px;
-            border: 1px solid rgba(255, 255, 255, 0.1);
-            box-shadow: 0 8px 32px 0 rgba(0, 0, 0, 0.37);
-        }
-
-        /* 📱 Container */
-        .container {
-            max-width: 1200px;
-            margin: 0 auto;
-            padding: 20px;
-        }
-
-        /* 🎯 Header */
-        .header {
-            padding: 20px;
+        
+        #map {
+            height: 70vh;
+            width: 100%;
+            border-radius: 10px;
             margin-bottom: 20px;
-            display: flex;
-            justify-content: space-between;
-            align-items: center;
-            flex-wrap: wrap;
+        }
+        
+        .container {
+            padding: 20px;
+            max-width: 800px;
+            margin: 0 auto;
+        }
+        
+        .stats {
+            background: #333;
+            padding: 15px;
+            border-radius: 10px;
+            margin-bottom: 20px;
+            display: grid;
+            grid-template-columns: repeat(3, 1fr);
             gap: 10px;
         }
-
-        .header h1 {
-            margin: 0;
-            font-size: 2em;
-            background: linear-gradient(45deg, var(--primary), var(--secondary));
-            -webkit-background-clip: text;
-            -webkit-text-fill-color: transparent;
-        }
-
-        /* 🗺️ Map */
-        #map {
-            height: 60vh;
-            border-radius: 15px;
-            box-shadow: 0 8px 32px rgba(0, 255, 136, 0.1);
-            margin-bottom: 20px;
-            transition: all 0.3s ease;
-        }
-
-        #map:hover {
-            box-shadow: 0 12px 48px rgba(0, 255, 136, 0.2);
-        }
-
-        /* 📊 Stats Grid */
-        .stats-container {
-            display: grid;
-            grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
-            gap: 20px;
-            margin-bottom: 20px;
-        }
-
-        .stat-card {
-            padding: 20px;
+        
+        .stat-box {
             text-align: center;
-            transition: all 0.3s ease;
+            padding: 10px;
+            background: #444;
+            border-radius: 8px;
         }
-
-        .stat-card:hover {
-            transform: translateY(-5px);
-        }
-
-        .stat-value {
-            font-size: 2em;
-            font-weight: bold;
-            background: linear-gradient(45deg, var(--primary), var(--secondary));
-            -webkit-background-clip: text;
-            -webkit-text-fill-color: transparent;
-            margin: 10px 0;
-        }
-
-        /* 🎮 Controls */
-        .control-panel {
-            display: grid;
-            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
-            gap: 15px;
-            margin-bottom: 20px;
-        }
-
+        
         .btn {
-            background: linear-gradient(45deg, var(--primary), var(--secondary));
+            background: #00ff00;
+            color: #000;
             border: none;
-            padding: 15px 30px;
-            border-radius: 10px;
-            color: var(--dark);
-            font-weight: bold;
-            cursor: pointer;
-            transition: all 0.3s ease;
-            text-transform: uppercase;
-            letter-spacing: 1px;
-            position: relative;
-            overflow: hidden;
-        }
-
-        .btn::after {
-            content: '';
-            position: absolute;
-            top: 0;
-            left: 0;
-            width: 200%;
-            height: 100%;
-            background: linear-gradient(45deg, transparent, rgba(255,255,255,0.2), transparent);
-            transform: translateX(-100%);
-        }
-
-        .btn:hover::after {
-            transform: translateX(100%);
-            transition: all 0.5s ease;
-        }
-
-        .btn:hover {
-            transform: scale(1.05);
-            box-shadow: 0 0 20px rgba(0, 255, 136, 0.3);
-        }
-
-        /* 📱 Status Badges */
-        .status-badge {
-            display: inline-block;
-            padding: 8px 16px;
-            border-radius: 20px;
-            font-size: 0.9em;
-            font-weight: 500;
-            margin: 5px;
-            background: var(--primary);
-            color: var(--dark);
-            transition: all 0.3s ease;
-        }
-
-        .status-badge:hover {
-            transform: scale(1.05);
-        }
-
-        /* 🎯 Accuracy Meter */
-        .accuracy-meter {
-            height: 6px;
-            background: rgba(255, 255, 255, 0.1);
-            border-radius: 3px;
-            margin: 10px 0;
-            overflow: hidden;
-        }
-
-        .accuracy-bar {
-            height: 100%;
-            background: linear-gradient(90deg, var(--primary), var(--secondary));
-            transition: width 0.3s ease;
-        }
-
-        /* 🌈 Animations */
-        @keyframes pulse {
-            0% { transform: scale(1); opacity: 1; }
-            50% { transform: scale(1.05); opacity: 0.8; }
-            100% { transform: scale(1); opacity: 1; }
-        }
-
-        @keyframes float {
-            0% { transform: translateY(0px); }
-            50% { transform: translateY(-10px); }
-            100% { transform: translateY(0px); }
-        }
-
-        .pulse {
-            animation: pulse 2s infinite;
-        }
-
-        .float {
-            animation: float 3s ease-in-out infinite;
-        }
-
-        /* 📱 Responsive Design */
-        @media (max-width: 768px) {
-            .header {
-                flex-direction: column;
-                text-align: center;
-            }
-
-            .stats-container {
-                grid-template-columns: 1fr;
-            }
-
-            .stat-card {
-                margin-bottom: 10px;
-            }
-        }
-
-        /* 🌙 Dark Mode Enhancement */
-        @media (prefers-color-scheme: dark) {
-            .glass {
-                background: rgba(0, 0, 0, 0.3);
-            }
-        }
-
-        /* 🎨 Custom Scrollbar */
-        ::-webkit-scrollbar {
-            width: 10px;
-        }
-
-        ::-webkit-scrollbar-track {
-            background: var(--dark);
-        }
-
-        ::-webkit-scrollbar-thumb {
-            background: var(--primary);
+            padding: 10px 20px;
             border-radius: 5px;
+            cursor: pointer;
+            font-size: 16px;
+            font-weight: bold;
+            width: 100%;
+            margin-bottom: 10px;
         }
-
-        ::-webkit-scrollbar-thumb:hover {
-            background: var(--primary-dark);
+        
+        .btn:disabled {
+            background: #666;
+        }
+        
+        .title {
+            text-align: center;
+            margin-bottom: 20px;
+            font-size: 24px;
         }
     </style>
 </head>
 <body>
     <div class="container">
-        <header class="header glass">
-            <h1><i class="fas fa-satellite"></i> GPS Tracker Pro</h1>
-            <div>
-                <span class="status-badge" id="connectionStatus">
-                    <i class="fas fa-signal"></i> ออนไลน์
-                </span>
-                <span class="status-badge" id="batteryStatus">
-                    <i class="fas fa-battery-full"></i> 100%
-                </span>
-                <span class="status-badge" id="timeStatus">
-                    <i class="fas fa-clock"></i> <?php echo date('H:i:s'); ?>
-                </span>
+        <h1 class="title">🚀 GPS Tracker ตัวเทพ!</h1>
+        
+        <div class="stats">
+            <div class="stat-box">
+                <h3>⚡ ความเร็ว</h3>
+                <div id="speed">0 กม./ชม.</div>
             </div>
-        </header>
-
-        <div id="map" class="glass"></div>
-
-        <div class="control-panel">
-            <button id="startBtn" class="btn">
-                <i class="fas fa-play"></i> เริ่มการนำทาง
-            </button>
-            <button id="stopBtn" class="btn" style="display:none">
-                <i class="fas fa-stop"></i> หยุดการนำทาง
-            </button>
-            <button id="shareBtn" class="btn">
-                <i class="fas fa-share-alt"></i> แชร์ตำแหน่ง
-            </button>
-            <button id="saveBtn" class="btn">
-                <i class="fas fa-save"></i> บันทึกเส้นทาง
-            </button>
-        </div>
-
-        <div class="accuracy-meter">
-            <div id="accuracyBar" class="accuracy-bar" style="width: 0%"></div>
-        </div>
-
-        <div class="stats-container">
-            <div class="stat-card glass float">
-                <h3><i class="fas fa-tachometer-alt"></i> ความเร็วปัจจุบัน</h3>
-                <div id="currentSpeed" class="stat-value">0 กม/ชม</div>
-                <div id="speedAlert"></div>
+            <div class="stat-box">
+                <h3>📏 ระยะทาง</h3>
+                <div id="distance">0 กม.</div>
             </div>
-
-            <div class="stat-card glass float">
-                <h3><i class="fas fa-road"></i> ระยะทางรวม</h3>
-                <div id="totalDistance" class="stat-value">0 กม</div>
-                <div id="weather"></div>
-            </div>
-
-            <div class="stat-card glass float">
-                <h3><i class="fas fa-stopwatch"></i> เวลาที่ใช้</h3>
-                <div id="totalTime" class="stat-value">0:00:00</div>
-                <div id="pace"></div>
-            </div>
-
-            <div class="stat-card glass float">
-                <h3><i class="fas fa-chart-line"></i> ความเร็วเฉลี่ย</h3>
-                <div id="avgSpeed" class="stat-value">0 กม/ชม</div>
-                <div id="efficiency"></div>
+            <div class="stat-box">
+                <h3>⏱️ เวลา</h3>
+                <div id="time">00:00:00</div>
             </div>
         </div>
+
+        <button id="startBtn" class="btn">▶️ เริ่มการติดตาม</button>
+        <button id="stopBtn" class="btn" disabled>⏹️ หยุดการติดตาม</button>
+        
+        <div id="map"></div>
     </div>
 
-    <!-- 🗺️ Map & Utils -->
     <script src="https://unpkg.com/leaflet@1.7.1/dist/leaflet.js"></script>
     <script>
-        // 🌟 Initialize Variables
+        // 🎮 JavaScript แบบโหดๆ
         let map, marker, path;
-        let isTracking = false;
+        let tracking = false;
         let startTime = null;
-        let positions = [];
-        let totalDistance = 0;
-        let trackData = {
-            timestamps: [],
-            speeds: [],
-            positions: []
-        };
-
-        // 🗺️ Initialize Map
-        function initMap() {
-            map = L.map('map').setView([13.7563, 100.5018], 15);
-            L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
-                attribution: '© OpenStreetMap contributors'
-            }).addTo(map);
-        }
-
-        // 🔋 Battery Status
-        navigator.getBattery().then(battery => {
-            function updateBattery() {
-                const level = Math.round(battery.level * 100);
-                let icon = 'battery-full';
-                if (level <= 20) icon = 'battery-quarter';
-                else if (level <= 50) icon = 'battery-half';
-                else if (level <= 75) icon = 'battery-three-quarters';
-                
-                document.getElementById('batteryStatus').innerHTML = 
-                    `<i class="fas fa-${icon}"></i> ${level}%`;
+        let watchId = null;
+        
+        // 🗺️ ตั้งค่าแผนที่
+        map = L.map('map').setView([13.7563, 100.5018], 15);
+        L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+            attribution: '© OpenStreetMap'
+        }).addTo(map);
+        
+        // 👊 ปุ่มควบคุม
+        document.getElementById('startBtn').onclick = startTracking;
+        document.getElementById('stopBtn').onclick = stopTracking;
+        
+        function startTracking() {
+            if (!navigator.geolocation) {
+                alert('เบราว์เซอร์ของคุณไม่รองรับ GPS 😭');
+                return;
             }
-            battery.addEventListener('levelchange', updateBattery);
-            updateBattery();
-        });
-
-        // 📍 Calculate Distance
-        function calculateDistance(lat1, lon1, lat2, lon2) {
-            const R = 6371e3;
-            const φ1 = lat1 * Math.PI/180;
-            const φ2 = lat2 * Math.PI/180;
-            const Δφ = (lat2-lat1) * Math.PI/180;
-            const Δλ = (lon2-lon1) * Math.PI/180;
-
-            const a = Math.sin(Δφ/2) * Math.sin(Δφ/2) +
-                    Math.cos(φ1) * Math.cos(φ2) *
-                    Math.sin(Δλ/2) * Math.sin(Δλ/2);
-            const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1-a));
-
-            return R * c;
-        }
-
-        // ⚡ Update Stats
-        function updateStats(position) {
-            const speed = position.coords.speed ? position.coords.speed * 3.6 : 0;
-            trackData.speeds.push(speed);
-            trackData.timestamps.push(Date.now());
-
-            document.getElementById('currentSpeed').textContent = 
-                `${speed.toFixed(1)} กม/ชม`;
-
-            // Update time
-            const currentTime = new Date().getTime();
-            const elapsedTime = (currentTime - startTime) / 1000;
-            const hours = Math.floor(elapsedTime / 3600);
-            const minutes = Math.floor((elapsedTime % 3600) / 60);
-            const seconds = Math.floor(elapsedTime % 60);
             
-            document.getElementById('totalTime').textContent = 
-                `${hours}:${minutes.toString().padStart(2, '0')}:${seconds.toString().padStart(2, '0')}`;
-
-            // Update distance
-            document.getElementById('totalDistance').textContent = 
-                `${(totalDistance / 1000).toFixed(2)} กม`;
-
-            // Update average speed
-            const avgSpeed = totalDistance / elapsedTime * 3.6;
-            document.getElementById('avgSpeed').textContent = 
-                `${avgSpeed.toFixed(1)} กม/ชม`;
-
-            // Update efficiency
-            const efficiency = speed > 0 ? (totalDistance / elapsedTime / speed) * 100 : 0;
-            document.getElementById('efficiency').textContent = 
-                `ประสิทธิภาพ: ${efficiency.toFixed(0)}%`;
-
-            // Speed alerts
-            const speedAlert = document.getElementById('speedAlert');
-            if (speed > 80) {
-                speedAlert.innerHTML = '⚠️ ความเร็วเกินกำหนด!';
-                speedAlert.style.color = var(--danger);
-                speedAlert.classList.add('pulse');
-            } else {
-                speedAlert.innerHTML = '';
-                speedAlert.classList.remove('pulse');
-            }
-        }
-
-        // 📍 Update Position
-        function updatePosition(position) {
-            const { latitude, longitude, accuracy } = position.coords;
+            tracking = true;
+            startTime = new Date();
+            document.getElementById('startBtn').disabled = true;
+            document.getElementById('stopBtn').disabled = false;
             
-            // Update accuracy indicator
-            const accuracyPercentage = Math.max(0, Math.min(100, 100 - (accuracy / 100)));
-            document.getElementById('accuracyBar').style.width = `${accuracyPercentage}%`;
-
-            if (!marker) {
-                marker = L.marker([latitude, longitude]).addTo(map);
-                path = L.polyline([], {
-                    color: var(--primary),
-                    weight: 3,
-                    opacity: 0.8
-                }).addTo(map);
-            }
-
-            marker.setLatLng([latitude, longitude]);
-            map.setView([latitude, longitude]);
-            
-            positions.push([latitude, longitude]);
-            trackData.positions.push({
-                lat: latitude,
-                lng: longitude,
-                timestamp: Date.now()
-            });
-            
-            path.setLatLngs(positions);
-
-            if (positions.length > 1) {
-                const lastPos = positions[positions.length - 2];
-                totalDistance += calculateDistance(
-                    lastPos[0], lastPos[1],
-                    latitude, longitude
-                );
-            }
-
-            updateStats(position);
-            
-            // Update weather every 5 minutes
-            if (positions.length % 300 === 0) {
-                getWeather(latitude, longitude);
-            }
-        }
-
-        // 🌡️ Weather Integration
-        async function getWeather(lat, lon) {
-            try {
-                const response = await fetch(
-                    `https://api.openweathermap.org/data/2.5/weather?lat=${lat}&lon=${lon}&appid=YOUR_API_KEY&units=metric`
-                );
-                const data = await response.json();
-                document.getElementById('weather').innerHTML = 
-                    `<i class="fas fa-temperature-high"></i> ${data.main.temp}°C ${data.weather[0].description}`;
-            } catch (err) {
-                console.error('Weather error:', err);
-            }
-        }
-
-        // 💾 Save Track Data
-        document.getElementById('saveBtn').addEventListener('click', () => {
-            const trackJson = JSON.stringify(trackData);
-            const blob = new Blob([trackJson], { type: 'application/json' });
-            const url = URL.createObjectURL(blob);
-            const a = document.createElement('a');
-            a.href = url;
-            a.download = `track_${new Date().toISOString()}.json`;
-            document.body.appendChild(a);
-            a.click();
-            document.body.removeChild(a);
-            URL.revokeObjectURL(url);
-        });
-
-        // 📤 Share Location
-        document.getElementById('shareBtn').addEventListener('click', () => {
-            if (positions.length > 0) {
-                const lastPos = positions[positions.length - 1];
-                const url = `https://www.google.com/maps?q=${lastPos[0]},${lastPos[1]}`;
-                if (navigator.share) {
-                    navigator.share({
-                        title: 'ตำแหน่งของฉัน',
-                        text: 'นี่คือตำแหน่งปัจจุบันของฉัน!',
-                        url: url
-                    }).catch(console.error);
-                } else {
-                    window.open(url, '_blank');
+            // 📍 เริ่มติดตาม GPS
+            watchId = navigator.geolocation.watchPosition(
+                updatePosition,
+                (error) => alert('เกิดข้อผิดพลาด: ' + error.message),
+                {
+                    enableHighAccuracy: true,
+                    maximumAge: 0
                 }
+            );
+            
+            // เริ่มอัพเดทเวลา
+            setInterval(updateTime, 1000);
+        }
+        
+        function stopTracking() {
+            tracking = false;
+            document.getElementById('startBtn').disabled = false;
+            document.getElementById('stopBtn').disabled = true;
+            
+            if (watchId !== null) {
+                navigator.geolocation.clearWatch(watchId);
+                watchId = null;
             }
-        });
-
-        // 🎮 Start/Stop Controls
-        document.getElementById('startBtn').addEventListener('click', () => {
-            if (!isTracking) {
-                navigator.geolocation.getCurrentPosition((position) => {
-                    startTime = new Date().getTime();
-                    isTracking = true;
-                    positions = [];
-                    totalDistance = 0;
-                    trackData = {
-                        timestamps: [],
-                        speeds: [],
-                        positions: []
-                    };
-                    
-                    document.getElementById('startBtn').style.display = 'none';
-                    document.getElementById('stopBtn').style.display = 'block';
-                    
-                    navigator.geolocation.watchPosition(updatePosition, null, {
-                        enableHighAccuracy: true,
-                        maximumAge: 0
-                    });
-                });
+        }
+        
+        function updatePosition(position) {
+            const lat = position.coords.latitude;
+            const lng = position.coords.longitude;
+            const speed = position.coords.speed ? position.coords.speed * 3.6 : 0;
+            
+            // 🎯 อัพเดทตำแหน่งบนแผนที่
+            if (!marker) {
+                marker = L.marker([lat, lng]).addTo(map);
+                path = L.polyline([], {color: '#ff0000'}).addTo(map);
             }
-        });
-
-        document.getElementById('stopBtn').addEventListener('click', () => {
-            isTracking = false;
-            document.getElementById('startBtn').style.display = 'block';
-            document.getElementById('stopBtn').style.display = 'none';
-            document.getElementById('connectionStatus').innerHTML = 
-                '<i class="fas fa-signal"></i> การนำทางสิ้นสุด';
-        });
-
-        // 🚀 Initialize
-        initMap();
-
-        // ⏰ Update time
-        setInterval(() => {
-            document.getElementById('timeStatus').innerHTML = 
-                `<i class="fas fa-clock"></i> ${new Date().toLocaleTimeString()}`;
-        }, 1000);
-
-        // 📡 Check connection
-        window.addEventListener('online', () => {
-            document.getElementById('connectionStatus').innerHTML = 
-                '<i class="fas fa-signal"></i> ออนไลน์';
-        });
-
-        window.addEventListener('offline', () => {
-            document.getElementById('connectionStatus').innerHTML = 
-                '<i class="fas fa-signal-slash"></i> ออฟไลน์';
-        });
+            
+            marker.setLatLng([lat, lng]);
+            path.addLatLng([lat, lng]);
+            map.setView([lat, lng]);
+            
+            // 📊 อัพเดทสถิติ
+            document.getElementById('speed').innerHTML = 
+                `${speed.toFixed(1)} กม./ชม.`;
+            
+            // 🌐 ส่งข้อมูลไปเซิร์ฟเวอร์
+            fetch(window.location.href, {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                },
+                body: JSON.stringify({
+                    lat: lat,
+                    lng: lng,
+                    speed: speed
+                })
+            })
+            .then(response => response.json())
+            .then(data => {
+                document.getElementById('distance').innerHTML = 
+                    `${data.distance} กม.`;
+            });
+        }
+        
+        function updateTime() {
+            if (!tracking || !startTime) return;
+            
+            const now = new Date();
+            const diff = now - startTime;
+            const hours = Math.floor(diff / 3600000);
+            const minutes = Math.floor((diff % 3600000) / 60000);
+            const seconds = Math.floor((diff % 60000) / 1000);
+            
+            document.getElementById('time').innerHTML = 
+                `${pad(hours)}:${pad(minutes)}:${pad(seconds)}`;
+        }
+        
+        function pad(num) {
+            return num.toString().padStart(2, '0');
+        }
     </script>
 </body>
 </html>
